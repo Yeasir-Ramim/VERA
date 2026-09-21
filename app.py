@@ -162,7 +162,7 @@ sample_img_path: Optional[str] = None
 uploaded_pil: Optional[Image.Image] = None
 
 if data_source == "Use Presets (Grades 0 to 4)":
-    sample_dir = Path("sample_data/images")
+    sample_dir = Path("notebooks/sample_data/images")
     if sample_dir.exists():
         preset_files = sorted(list(sample_dir.glob("fundus_*.png")))
         if preset_files:

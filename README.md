@@ -4,22 +4,32 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**An explainable, vessel-aware deep learning system for automated Diabetic Retinopathy screening and severity grading.**
+**Production-ready, vessel-aware deep learning system for automated Diabetic Retinopathy detection trained on real clinical datasets.**
+
+🚀 **NEW**: Real dataset support added! Train on APTOS 2019 (3.6k images), EyePACS (35k images), and Messidor-2 (1.7k images)
+
+---
+
+## 🎯 Quick Links
+
+- **[Get Started in 10 Minutes →](QUICKSTART.md)**
+- [Download APTOS Dataset](https://www.kaggle.com/c/aptos2019-blindness-detection)
+- [Full Documentation](#documentation)
+- [Research Paper (Coming Soon)](#)
 
 ---
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
+- [What's New](#whats-new)
 - [Key Features](#key-features)
-- [Why VERA?](#why-vera)
+- [Quick Start](#quick-start)
+- [Training on Real Datasets](#training-on-real-datasets)
 - [System Architecture](#system-architecture)
 - [Project Structure](#project-structure)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Clinical Background](#clinical-background)
-- [Technical Innovation](#technical-innovation)
-- [Results & Performance](#results--performance)
+- [Usage Examples](#usage-examples)
+- [Performance Benchmarks](#performance-benchmarks)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -29,7 +39,32 @@
 
 ## 🔬 Overview
 
-**VERA (Vascular Explainable Retinopathy Assessment)** is a state-of-the-art deep learning system designed to automatically detect and grade Diabetic Retinopathy (DR) from retinal fundus photographs. Unlike traditional "black-box" AI systems, VERA incorporates explicit domain knowledge about retinal vascular anatomy to produce **clinically interpretable** and **trustworthy** diagnostic predictions.
+**VERA (Vascular Explainable Retinopathy Assessment)** is a production-ready deep learning system for automated Diabetic Retinopathy detection. Train on real clinical datasets (APTOS, EyePACS, Messidor-2) with state-of-the-art vessel-aware architectures.
+
+## ⚡ What's New
+
+**✅ Real Dataset Support** - Train on actual clinical data:
+- **APTOS 2019**: 3,662 retinal images, 5-class grading
+- **EyePACS**: ~35,000 images for large-scale training  
+- **Messidor-2**: 1,748 images for external validation
+
+**✅ Production Training Pipeline** - Complete training system:
+- Automated dataset setup with `setup_datasets.py`
+- Full training script with mixed precision, class weighting
+- Comprehensive evaluation with clinical metrics (QWK, AUC)
+- Configuration files for reproducible experiments
+
+**✅ Multiple Training Strategies**:
+- Quick test: 5 minutes on sample data
+- Fast training: 2 hours on APTOS (GPU)
+- Production: 8-12 hours on EyePACS (GPU)
+
+**⚠️ Demo vs Real System**:
+- `run_mvp.py` - Demo with synthetic data (quick testing)
+- `train.py` - **Production system with real datasets** (this is what you want!)
+- `evaluate.py` - Comprehensive model evaluation
+
+---
 
 ### What Makes VERA Different?
 
@@ -306,7 +341,7 @@ VERA/
 #### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/VERA.git
+git clone https://github.com/Yeasir-Ramim/VERA.git
 cd VERA
 ```
 

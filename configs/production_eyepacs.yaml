@@ -1,0 +1,97 @@
+# Production Configuration for EyePACS Dataset
+# Large-scale training with ~35,000 images
+# Expected training time: 8-12 hours on RTX 3060
+
+# Dataset Configuration
+dataset:
+  name: "eyepacs"
+  data_dir: "data/raw"
+  processed_dir: "data/processed"
+  vessel_cache_dir: "data/processed/vessel_cache"
+  
+  train_split: 0.85
+  val_split: 0.10
+  test_split: 0.05
+  
+  target_size: [224, 224]
+  preprocessing:
+    circular_crop: true
+    clahe: true
+    ben_graham: true  # Advanced preprocessing
+    normalize: true
+
+# Model Architecture - High Capacity
+model:
+  backbone: "efficientnet_b3"  # Larger backbone for better performance
+  fusion_type: "attention_gated"  # Best fusion strategy
+  num_classes: 5
+  pretrained: true
+  dropout: 0.4
+
+# Training Configuration
+training:
+  epochs: 50
+  batch_size: 64  # Larger batch size for stability
+  num_workers: 8
+  seed: 42
+  
+  optimizer:
+    type: "adamw"
+    lr: 0.0003  # Higher LR for large batches
+    weight_decay: 0.0001
+  
+  scheduler:
+    type: "cosine"
+  
+  loss:
+    type: "qwk"  # Direct QWK optimization for best metric
+    class_weights: true
+    label_smoothing: 0.15
+  
+  mixed_precision: true
+  
+  early_stopping:
+    enabled: true
+    patience: 15  # More patience for large dataset
+    monitor: "val_kappa"
+    mode: "max"
+
+# Strong Data Augmentation
+augmentation:
+  train:
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    rotation_limit: 180
+    brightness_limit: 0.3
+    contrast_limit: 0.3
+    blur_limit: 5
+    gaussian_noise: 0.02
+    cutout:
+      enabled: true
+      num_holes: 12
+      max_h_size: 24
+      max_w_size: 24
+
+# Checkpointing
+checkpoint:
+  dir: "checkpoints/eyepacs_production"
+  save_every: 5
+  save_best_only: false
+  monitor: "val_kappa"
+  mode: "max"
+
+# Logging
+logging:
+  log_dir: "logs/eyepacs_production"
+  tensorboard: true
+  print_freq: 20
+
+# Expected Performance
+# Accuracy: 83-86%
+# Quadratic Kappa: 0.85-0.90
+# Referable DR AUC: 0.95+
+
+experiment:
+  name: "eyepacs_production_v1"
+  tags: ["production", "eyepacs", "efficientnet_b3", "attention_gated", "qwk_loss"]
+  notes: "Production model on full EyePACS dataset with attention-gated fusion and QWK loss"

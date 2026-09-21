@@ -274,4 +274,14 @@ def create_dataloaders(
 
 # Alias for cross-dataset generalization (APTOS, EyePACS, Messidor-2)
 RetinalDRDataset = APTOSDataset
+FundusDataset = APTOSDataset  # Main export name
+
+# Transform functions for compatibility
+def get_train_transform():
+    """Returns training augmentation transform."""
+    return None  # Will use default numpy augmentations in dataset
+
+def get_val_transform():
+    """Returns validation transform (no augmentation)."""
+    return None
 

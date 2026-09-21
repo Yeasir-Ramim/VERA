@@ -1,0 +1,148 @@
+# VERA Training Configuration
+# This file contains all hyperparameters for training the DR classification system
+
+# Dataset Configuration
+dataset:
+  name: "aptos"  # Options: aptos, eyepacs, messidor2
+  data_dir: "data/raw"
+  processed_dir: "data/processed"
+  vessel_cache_dir: "data/processed/vessel_cache"
+  
+  # Data splits
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  
+  # Image preprocessing
+  target_size: [224, 224]
+  preprocessing:
+    circular_crop: true
+    clahe: true
+    ben_graham: false  # Enable for Phase 2
+    normalize: true
+
+# Model Architecture
+model:
+  backbone: "resnet50"  # Options: resnet18, resnet50, efficientnet_b0, efficientnet_b3
+  fusion_type: "early"  # Options: early, dual_branch, attention_gated
+  num_classes: 5
+  pretrained: true
+  dropout: 0.3
+  
+  # Vessel segmentation
+  vessel_segmenter:
+    model: "unet"
+    pretrained_path: null  # Path to pretrained vessel segmenter weights
+
+# Training Configuration
+training:
+  # Basic settings
+  epochs: 50
+  batch_size: 32
+  num_workers: 4
+  seed: 42
+  
+  # Optimization
+  optimizer:
+    type: "adamw"  # Options: adam, adamw, sgd
+    lr: 0.0001
+    weight_decay: 0.0001
+    momentum: 0.9  # For SGD only
+  
+  # Learning rate scheduler
+  scheduler:
+    type: "cosine"  # Options: none, step, cosine, plateau
+    step_size: 10  # For step scheduler
+    gamma: 0.1     # For step scheduler
+    patience: 5    # For plateau scheduler
+  
+  # Loss function
+  loss:
+    type: "ce"  # Options: ce (cross-entropy), focal, qwk
+    class_weights: true
+    label_smoothing: 0.1
+    focal_alpha: null  # For focal loss
+    focal_gamma: 2.0   # For focal loss
+  
+  # Regularization
+  dropout: 0.3
+  label_smoothing: 0.1
+  
+  # Mixed precision training
+  mixed_precision: true
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 10
+    monitor: "val_kappa"  # Options: val_loss, val_acc, val_kappa
+    mode: "max"  # max for kappa/acc, min for loss
+
+# Data Augmentation
+augmentation:
+  train:
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    rotation_limit: 180
+    brightness_limit: 0.2
+    contrast_limit: 0.2
+    blur_limit: 3
+    gaussian_noise: 0.01
+    random_crop: false
+    cutout:
+      enabled: true
+      num_holes: 8
+      max_h_size: 16
+      max_w_size: 16
+    
+  val:
+    # No augmentation for validation
+    pass
+
+# Checkpointing
+checkpoint:
+  dir: "checkpoints"
+  save_every: 5  # Save every N epochs
+  save_best_only: false
+  monitor: "val_kappa"
+  mode: "max"
+
+# Logging
+logging:
+  log_dir: "logs"
+  tensorboard: false
+  wandb: false
+  wandb_project: "vera-dr-detection"
+  print_freq: 10
+
+# Evaluation
+evaluation:
+  metrics:
+    - "accuracy"
+    - "quadratic_kappa"
+    - "linear_kappa"
+    - "confusion_matrix"
+    - "classification_report"
+    - "referable_auc"
+  
+  save_predictions: true
+  save_misclassified: true
+
+# Hardware
+hardware:
+  device: "auto"  # Options: auto, cuda, cpu
+  gpu_ids: [0]    # For multi-GPU training
+  num_workers: 4
+  pin_memory: true
+
+# Experiment Tracking
+experiment:
+  name: "vera_baseline"
+  tags: ["vessel_aware", "4channel", "resnet50"]
+  notes: "Baseline 4-channel vessel-aware model with early fusion"
+
+# Reproducibility
+reproducibility:
+  seed: 42
+  deterministic: true
+  benchmark: false

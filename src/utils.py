@@ -302,3 +302,38 @@ def plot_prediction_explanation(
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         
     return fig
+
+
+
+import random
+import torch
+
+
+def set_seed(seed: int = 42):
+    """Set random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+def save_checkpoint(model, optimizer, epoch, val_loss, val_kappa, path, is_best=False):
+    """Save training checkpoint."""
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'val_loss': val_loss,
+        'val_kappa': val_kappa,
+        'is_best': is_best
+    }
+    torch.save(checkpoint, path)
+
+
+def load_checkpoint(path):
+    """Load training checkpoint."""
+    return torch.load(path, map_location='cpu')
