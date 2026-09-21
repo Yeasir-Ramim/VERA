@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "backbone": "resnet18",
+    "device": "cpu",
+    "epochs": 1,
+    "loss_type": "hybrid",
+    "timestamp": "2026-09-15 12:54:03"
+  },
+  "ablation_1_channel_contribution": {
+    "Baseline_3ch_RGB": {
+      "accuracy": 0.65,
+      "qwk": 0.9157,
+      "referable_auc": 1.0
+    },
+    "VERA_4ch_VesselAware": {
+      "accuracy": 0.6,
+      "qwk": 0.9,
+      "referable_auc": 1.0,
+      "qwk_gain": -0.0157
+    }
+  },
+  "ablation_2_fusion_topologies": {
+    "Early_Fusion_Channel_Stacking": {
+      "accuracy": 0.6,
+      "qwk": 0.9,
+      "referable_auc": 1.0
+    },
+    "Dual_Branch_Late_Fusion": {
+      "accuracy": 0.5,
+      "qwk": 0.878,
+      "referable_auc": 1.0
+    },
+    "Spatial_Attention_Gated_Fusion": {
+      "accuracy": 0.8,
+      "qwk": 0.95,
+      "referable_auc": 1.0
+    }
+  },
+  "ablation_3_explainability_overlap": {
+    "Baseline_3ch_Mean_Overlap": 0.0617,
+    "VERA_GradCAM_Mean_Overlap": 0.0609,
+    "VERA_GradCAMPlusPlus_Mean_Overlap": 0.0661,
+    "Overlap_Improvement": 0.0044
+  }
+}

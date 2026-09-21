@@ -1,0 +1,343 @@
+# VERA Phase 2 - Production Configuration
+# Main configuration file for training, evaluation, and inference
+
+# Experiment Metadata
+experiment:
+  name: "vera_phase2_production"
+  version: "2.0"
+  description: "Full production VERA with multi-dataset training and advanced fusion"
+  random_seed: 42
+
+# Dataset Configuration
+data:
+  # Primary datasets
+  datasets:
+    aptos:
+      enabled: true
+      path: "data/raw/aptos_2019"
+      type: "classification"
+      num_classes: 5
+      train_split: 0.8
+      val_split: 0.1
+      test_split: 0.1
+    
+    eyepacs:
+      enabled: true
+      path: "data/raw/eyepacs"
+      type: "classification"
+      num_classes: 5
+      train_split: 0.85
+      val_split: 0.15
+      test_split: 0.0  # Use external validation
+    
+    messidor2:
+      enabled: true
+      path: "data/raw/messidor2"
+      type: "validation"  # External validation only
+      num_classes: 5
+  
+  # Vessel segmentation datasets
+  vessel_datasets:
+    drive:
+      enabled: true
+      path: "data/raw/DRIVE"
+      type: "segmentation"
+    
+    chase_db1:
+      enabled: true
+      path: "data/raw/CHASE_DB1"
+      type: "segmentation"
+  
+  # Data loading
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  
+  # Image specifications
+  image_size: 512  # Increased from 224 for better resolution
+  target_size: 512
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+  
+  # Caching
+  cache_vessel_maps: true
+  vessel_cache_dir: "data/vessel_cache"
+
+# Preprocessing Configuration
+preprocessing:
+  # Enhanced preprocessing pipeline
+  circular_crop: true
+  crop_threshold: 10
+  
+  # Ben Graham preprocessing
+  ben_graham:
+    enabled: true
+    scale: 300
+    sigma: 10
+  
+  # CLAHE enhancement
+  clahe:
+    enabled: true
+    clip_limit: 2.0
+    tile_grid_size: [8, 8]
+    apply_to_channels: ["green"]  # or ["green", "red", "blue"]
+  
+  # Color normalization
+  color_normalization:
+    enabled: true
+    method: "imagenet"  # or "custom"
+  
+  # Augmentation (training only)
+  augmentation:
+    enabled: true
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    rotation_limit: 30
+    shift_limit: 0.1
+    scale_limit: 0.15
+    brightness_limit: 0.2
+    contrast_limit: 0.2
+    blur_limit: 3
+    cutout:
+      enabled: true
+      num_holes: 8
+      max_h_size: 32
+      max_w_size: 32
+      fill_value: 0
+
+# Vessel Segmentation Configuration
+vessel_segmentation:
+  # Architecture
+  architecture: "unet"
+  encoder: "resnet34"
+  pretrained_encoder: true
+  
+  # Training
+  fine_tune: true
+  freeze_encoder: false
+  learning_rate: 0.0001
+  epochs: 50
+  
+  # Inference
+  use_cached: true
+  cache_format: "png"
+  threshold: 0.5
+  
+  # Model path
+  pretrained_path: "models/pretrained/unet_vessel_segmentation.pth"
+  checkpoint_path: "models/checkpoints/vessel_segmentation_finetuned.pth"
+
+# Model Architecture Configuration
+model:
+  # Backbone selection
+  backbone: "efficientnet_b3"  # Options: resnet18, resnet50, efficientnet_b0, efficientnet_b3
+  pretrained: true
+  
+  # Fusion topology
+  fusion_strategy: "attention_gated"  # Options: early_fusion, dual_branch, attention_gated
+  
+  # Channel configuration
+  input_channels: 4  # [R, G, B, V]
+  use_vessel_channel: true
+  
+  # Classification head
+  num_classes: 5
+  dropout: 0.3
+  use_batch_norm: true
+  
+  # Attention mechanism (for attention_gated fusion)
+  attention:
+    num_attention_layers: 2
+    reduction_ratio: 16
+    use_spatial_attention: true
+    use_channel_attention: true
+
+# Training Configuration
+training:
+  # Optimization
+  optimizer: "adamw"  # Options: adam, adamw, sgd
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  momentum: 0.9  # For SGD
+  
+  # Learning rate scheduling
+  scheduler:
+    type: "cosine_annealing"  # Options: step, exponential, cosine_annealing, reduce_on_plateau
+    warmup_epochs: 5
+    min_lr: 0.000001
+    patience: 10  # For reduce_on_plateau
+    factor: 0.5   # For step/exponential
+  
+  # Loss function
+  loss:
+    type: "hybrid"  # Options: cross_entropy, focal, qwk, hybrid
+    class_weights: "auto"  # or "balanced" or list of weights
+    focal_gamma: 2.0
+    focal_alpha: 0.25
+    qwk_weight: 0.5  # For hybrid loss
+    label_smoothing: 0.1
+  
+  # Training settings
+  epochs: 100
+  early_stopping:
+    enabled: true
+    patience: 15
+    monitor: "val_qwk"
+    mode: "max"
+  
+  # Gradient handling
+  gradient_clip: 1.0
+  mixed_precision: true
+  
+  # Checkpointing
+  save_best_only: true
+  save_frequency: 5
+  checkpoint_dir: "models/checkpoints"
+  
+  # Logging
+  log_frequency: 10
+  tensorboard: true
+  wandb:
+    enabled: false
+    project: "vera_phase2"
+    entity: null
+
+# Evaluation Configuration
+evaluation:
+  # Metrics
+  metrics:
+    - "accuracy"
+    - "balanced_accuracy"
+    - "qwk"  # Quadratic Weighted Kappa
+    - "precision_per_class"
+    - "recall_per_class"
+    - "f1_per_class"
+    - "confusion_matrix"
+    - "roc_auc_referable"  # Binary: non-referable (0-1) vs referable (2-4)
+  
+  # Evaluation settings
+  batch_size: 64
+  num_workers: 4
+  
+  # Test Time Augmentation
+  tta:
+    enabled: false
+    num_augmentations: 5
+
+# Explainability Configuration
+explainability:
+  # Grad-CAM settings
+  gradcam:
+    method: "gradcam++"  # Options: gradcam, gradcam++, scorecam
+    target_layer: "auto"  # or specify layer name
+    use_cuda: true
+  
+  # Vessel-Attention Overlap Score
+  overlap_score:
+    enabled: true
+    normalize_heatmap: true
+    threshold: 0.3
+  
+  # Visualization
+  generate_reports: true
+  report_format: "4panel"  # Options: 4panel, grid, stacked
+  save_individual_heatmaps: true
+  overlay_alpha: 0.4
+  colormap: "jet"
+
+# Ablation Study Configuration
+ablation:
+  # Ablation 1: Vessel Channel Contribution
+  vessel_channel:
+    enabled: true
+    compare_configs:
+      - name: "baseline_rgb"
+        use_vessel_channel: false
+        input_channels: 3
+      - name: "vera_4channel"
+        use_vessel_channel: true
+        input_channels: 4
+  
+  # Ablation 2: Fusion Topology Comparison
+  fusion_topology:
+    enabled: true
+    compare_configs:
+      - name: "early_fusion"
+        fusion_strategy: "early_fusion"
+      - name: "dual_branch"
+        fusion_strategy: "dual_branch"
+      - name: "attention_gated"
+        fusion_strategy: "attention_gated"
+  
+  # Ablation 3: Backbone Architecture
+  backbone_comparison:
+    enabled: true
+    compare_configs:
+      - name: "resnet18"
+        backbone: "resnet18"
+      - name: "resnet50"
+        backbone: "resnet50"
+      - name: "efficientnet_b0"
+        backbone: "efficientnet_b0"
+      - name: "efficientnet_b3"
+        backbone: "efficientnet_b3"
+  
+  # Ablation 4: Loss Function
+  loss_function:
+    enabled: true
+    compare_configs:
+      - name: "cross_entropy"
+        loss_type: "cross_entropy"
+      - name: "qwk_loss"
+        loss_type: "qwk"
+      - name: "hybrid"
+        loss_type: "hybrid"
+  
+  # Statistical testing
+  statistical_test: "wilcoxon"  # Options: wilcoxon, t_test
+  significance_level: 0.05
+  num_runs: 5  # Multiple runs for statistical significance
+
+# Web Application Configuration
+web_app:
+  title: "VERA - Diabetic Retinopathy Detection"
+  description: "Vascular Explainable Retinopathy Assessment System"
+  
+  # Server settings
+  host: "0.0.0.0"
+  port: 8501
+  
+  # Model settings
+  model_path: "models/checkpoints/best_model.pth"
+  config_path: "configs/config.yaml"
+  
+  # UI settings
+  max_upload_size: 15  # MB
+  allowed_extensions: [".png", ".jpg", ".jpeg"]
+  show_confidence: true
+  show_explainability: true
+  show_vessel_map: true
+  
+  # Clinical thresholds
+  referable_threshold: 2  # Grades >= 2 require referral
+
+# Computational Configuration
+compute:
+  device: "cuda"  # Options: cuda, cpu, mps
+  gpu_ids: [0]  # List of GPU IDs to use
+  num_workers: 4
+  pin_memory: true
+  
+  # Memory optimization
+  gradient_checkpointing: false
+  empty_cache_frequency: 100  # Clear CUDA cache every N batches
+
+# Paths (relative to project root)
+paths:
+  data_root: "data"
+  output_root: "outputs"
+  models_root: "models"
+  logs_root: "outputs/logs"
+  figures_root: "outputs/figures"
+  experiments_root: "outputs/experiments"
