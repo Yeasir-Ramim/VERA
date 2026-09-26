@@ -174,3 +174,79 @@ def preprocess_fundus(
         img_rgb = cv2.resize(img_rgb, (target_size[1], target_size[0]), interpolation=cv2.INTER_AREA)
         
     return img_rgb
+
+
+def validate_fundus_image(img_rgb: np.ndarray) -> Tuple[bool, str, float]:
+    """
+    Validates whether an input image is a legitimate Retinal Fundus photograph related to DR.
+    Checks:
+    1. Channel structure (3-channel RGB image).
+    2. Ocular color profile & Red channel dominance (Fundus tissue is dominantly orange/reddish).
+    3. Foreground/background ratio (Circular aperture geometry).
+    4. Green channel vascular structural contrast.
+    
+    Args:
+        img_rgb: Input RGB image array of shape (H, W, 3).
+        
+    Returns:
+        Tuple of (is_valid: bool, reason_message: str, score: float)
+    """
+    if not isinstance(img_rgb, np.ndarray) or img_rgb.ndim != 3 or img_rgb.shape[2] != 3:
+        return False, "Invalid image format: Input must be a 3-channel RGB image.", 0.0
+        
+    h, w, _ = img_rgb.shape
+    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+    
+    # Check foreground (non-black border pixels)
+    fg_mask = gray > 15
+    fg_pixels = fg_mask.sum()
+    total_pixels = h * w
+    fg_ratio = fg_pixels / total_pixels
+    
+    if fg_pixels < 100 or fg_ratio < 0.10:
+        return False, "Uploaded image is too dark or empty. Please upload a clear Retinal Fundus photograph.", 0.0
+        
+    # Color profile check on foreground
+    r_fg = img_rgb[:, :, 0][fg_mask].astype(float)
+    g_fg = img_rgb[:, :, 1][fg_mask].astype(float)
+    b_fg = img_rgb[:, :, 2][fg_mask].astype(float)
+    
+    mean_r = float(np.mean(r_fg))
+    mean_g = float(np.mean(g_fg))
+    mean_b = float(np.mean(b_fg))
+    
+    # Retinal fundus tissue has strong Red dominance over Blue (mean_r > mean_b)
+    # and warm hue spectrum (R > B by significant margin)
+    red_blue_ratio = (mean_r + 1.0) / (mean_b + 1.0)
+    red_green_ratio = (mean_r + 1.0) / (mean_g + 1.0)
+    
+    # Check HSV hue spectrum (Ocular fundus hues are in red/orange: H < 30 or H > 150)
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    hues = hsv[:, :, 0][fg_mask]
+    warm_hue_pixels = np.logical_or(hues < 35, hues > 145).sum()
+    warm_hue_ratio = float(warm_hue_pixels) / len(hues) if len(hues) > 0 else 0.0
+    
+    # Structural variance in Green channel (where blood vessels/lesions create contrast)
+    green_ch = img_rgb[:, :, 1]
+    laplacian_var = float(cv2.Laplacian(green_ch, cv2.CV_64F).var())
+    
+    # Scoring system (0.0 to 1.0)
+    score = 0.0
+    if red_blue_ratio > 1.2: score += 0.35
+    if red_green_ratio > 0.95: score += 0.20
+    if warm_hue_ratio > 0.45: score += 0.30
+    if laplacian_var > 5.0: score += 0.15
+    
+    is_valid = score >= 0.50
+    
+    if is_valid:
+        msg = f"[OK] Valid Retinal Fundus Photograph verified (Confidence: {score*100:.1f}%)."
+    else:
+        msg = (
+            "[WARNING] Non-Retinal / Invalid Image Detected: The uploaded photograph does not match the characteristic color or structural features of a Retinal Fundus image. "
+            "Please upload a valid DR-related Retinal Fundus photograph (e.g., APTOS 2019, EyePACS, or Messidor fundus image) for Diabetic Retinopathy prediction."
+        )
+
+        
+    return is_valid, msg, round(score, 3)
+

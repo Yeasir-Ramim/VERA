@@ -172,7 +172,7 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.image("https://via.placeholder.com/300x100/3498db/ffffff?text=VERA", use_column_width=True)
+        st.image("https://via.placeholder.com/300x100/3498db/ffffff?text=VERA", use_container_width=True)
         st.markdown("## About VERA")
         st.info("""
         VERA is an advanced AI system for detecting diabetic retinopathy (DR) 
@@ -221,7 +221,7 @@ def main():
         
         with col1:
             st.markdown("### Original Image")
-            st.image(image, use_column_width=True)
+            st.image(image, use_container_width=True)
         
         # Process button
         if st.button("🔍 Analyze Image", type="primary"):
@@ -240,7 +240,7 @@ def main():
                     st.markdown("### Vessel Segmentation")
                     if vessel_segmenter:
                         vessel_vis = vessel_tensor.squeeze().numpy() * 255
-                        st.image(vessel_vis.astype(np.uint8), use_column_width=True, caption="Detected Blood Vessels")
+                        st.image(vessel_vis.astype(np.uint8), use_container_width=True, caption="Detected Blood Vessels")
                     else:
                         st.warning("Vessel segmentation not available")
                 
@@ -327,11 +327,11 @@ def main():
                     
                     with cam_col1:
                         st.markdown("**Attention Heatmap**")
-                        st.image(heatmap, use_column_width=True, clamp=True, caption="Model focus areas (red = high attention)")
+                        st.image(heatmap, use_container_width=True, clamp=True, caption="Model focus areas (red = high attention)")
                     
                     with cam_col2:
                         st.markdown("**Overlay on Original**")
-                        st.image(overlay, use_column_width=True, caption="Attention overlaid on fundus image")
+                        st.image(overlay, use_container_width=True, caption="Attention overlaid on fundus image")
                     
                     # Compute vessel-attention overlap if vessel segmenter available
                     if vessel_segmenter:

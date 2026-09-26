@@ -5,6 +5,7 @@ Quantitative metric for measuring model attention alignment with vessel structur
 """
 
 import torch
+import torch.nn as nn
 import numpy as np
 import cv2
 from typing import Tuple, Dict

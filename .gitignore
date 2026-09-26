@@ -50,15 +50,23 @@ data/raw/vessel_segmentation/images/
 data/processed/vessel_cache/
 notebooks/outputs/vessel_cache/
 
-# Model checkpoints (optional - uncomment if too large)
-# checkpoints/
-# *.pth
-# *.pt
-# *.h5
+# Model checkpoints
+checkpoints/
+*.pth
+*.pt
+*.h5
 
 # Outputs
 outputs/
 *.png.cache
+
+# Markdown files (ignore all except README.md)
+*.md
+*.MD
+!README.md
+!readme.md
+!**/README.md
+!**/readme.md
 
 # OS
 .DS_Store
@@ -68,3 +76,4 @@ Thumbs.db
 *.tmp
 *.bak
 *.swp
+
