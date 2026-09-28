@@ -9,7 +9,8 @@ Implements:
 Supports ResNet-18, ResNet-50, EfficientNet-B0, and EfficientNet-B3 backbones with weight preservation.
 """
 
-from typing import Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -168,7 +169,11 @@ class DRClassifier(nn.Module):
         if "resnet" in self.backbone_name:
             layer4 = self.backbone.layer4
             last_block = layer4[-1]
-            return last_block.conv2 if hasattr(last_block, "conv2") else (last_block.conv3 if hasattr(last_block, "conv3") else last_block)
+            if hasattr(last_block, "conv3"):
+                return last_block.conv3
+            elif hasattr(last_block, "conv2"):
+                return last_block.conv2
+            return last_block
         elif "efficientnet" in self.backbone_name:
             return self.backbone.features[-1]
         raise ValueError(f"Grad-CAM target layer not configured for {self.backbone_name}")
@@ -263,7 +268,11 @@ class DualBranchDRClassifier(nn.Module):
         if "resnet" in self.backbone_name:
             layer4 = self.rgb_features[7]
             last_block = layer4[-1]
-            return last_block.conv2 if hasattr(last_block, "conv2") else (last_block.conv3 if hasattr(last_block, "conv3") else last_block)
+            if hasattr(last_block, "conv3"):
+                return last_block.conv3
+            elif hasattr(last_block, "conv2"):
+                return last_block.conv2
+            return last_block
         elif "efficientnet" in self.backbone_name:
             return self.rgb_features[0][-1]
         return self.rgb_features[-1]
@@ -370,7 +379,11 @@ class SpatialAttentionGatedDRClassifier(nn.Module):
     def get_target_layer_for_gradcam(self) -> nn.Module:
         if "resnet" in self.backbone_name:
             last_block = self.layer4[-1]
-            return last_block.conv2 if hasattr(last_block, "conv2") else (last_block.conv3 if hasattr(last_block, "conv3") else last_block)
+            if hasattr(last_block, "conv3"):
+                return last_block.conv3
+            elif hasattr(last_block, "conv2"):
+                return last_block.conv2
+            return last_block
         return self.features[-1]
 
 
@@ -425,3 +438,41 @@ def build_model(
         raise ValueError(
             f"Unknown model_type: '{model_type}'. Choose from: 'baseline', 'vessel_aware', 'dual_branch', 'attention_gated'."
         )
+
+
+def load_checkpoint_safe(
+    checkpoint_path: Union[str, Path],
+    map_location: str = "cpu"
+) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
+    """
+    Safely loads PyTorch checkpoint dictionaries across PyTorch versions (including 2.6+).
+    Extracts model weights and any associated metadata (accuracy, kappa, epoch, backbone).
+    """
+    ckpt_path = Path(checkpoint_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+        
+    try:
+        data = torch.load(ckpt_path, map_location=map_location, weights_only=False)
+    except Exception:
+        # Fallback to standard torch.load
+        data = torch.load(ckpt_path, map_location=map_location)
+        
+    metadata = {}
+    if isinstance(data, dict):
+        if "model_state_dict" in data:
+            state_dict = data["model_state_dict"]
+            metadata = {k: v for k, v in data.items() if k not in ["model_state_dict", "optimizer_state_dict"]}
+        else:
+            state_dict = data
+    else:
+        state_dict = data
+        
+    # Clean keys if DataParallel was used
+    cleaned_sd = {}
+    for k, v in state_dict.items():
+        clean_k = k[7:] if k.startswith("module.") else k
+        cleaned_sd[clean_k] = v
+        
+    return cleaned_sd, metadata
+

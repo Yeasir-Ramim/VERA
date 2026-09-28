@@ -39,11 +39,29 @@ class BaseCAM:
         def backward_hook(module, grad_in, grad_out):
             self.gradients = grad_out[0].detach()
 
-        self.target_layer.register_forward_hook(forward_hook)
+        self.forward_handle = self.target_layer.register_forward_hook(forward_hook)
         if hasattr(self.target_layer, "register_full_backward_hook"):
-            self.target_layer.register_full_backward_hook(backward_hook)
+            self.backward_handle = self.target_layer.register_full_backward_hook(backward_hook)
         else:
-            self.target_layer.register_backward_hook(backward_hook)
+            self.backward_handle = self.target_layer.register_backward_hook(backward_hook)
+
+    def remove_hooks(self):
+        """Cleanly detaches hooks from the model to prevent memory leaks and gradient corruption."""
+        if hasattr(self, "forward_handle") and self.forward_handle is not None:
+            self.forward_handle.remove()
+            self.forward_handle = None
+        if hasattr(self, "backward_handle") and self.backward_handle is not None:
+            self.backward_handle.remove()
+            self.backward_handle = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.remove_hooks()
+
+    def __del__(self):
+        self.remove_hooks()
 
 
 class GradCAM(BaseCAM):

@@ -60,13 +60,13 @@ checkpoints/
 outputs/
 *.png.cache
 
-# Markdown files (ignore all except README.md)
+# Markdown files (ignore all except root README.md)
 *.md
 *.MD
-!README.md
-!readme.md
-!**/README.md
-!**/readme.md
+*/*.md
+*/*/*.md
+!/README.md
+!/readme.md
 
 # OS
 .DS_Store
