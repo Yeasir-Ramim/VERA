@@ -48,11 +48,12 @@ def generate_synthetic_fundus(
     g_base = np.clip(80 - 30 * (dist_from_center / radius), 40, 110)
     b_base = np.clip(20 - 10 * (dist_from_center / radius), 10, 35)
     
-    # Texture noise
-    noise = np.random.normal(0, 4, (h, w))
-    img[:, :, 0] = np.clip((r_base + noise) * fundus_mask, 0, 255).astype(np.uint8)
-    img[:, :, 1] = np.clip((g_base + noise) * fundus_mask, 0, 255).astype(np.uint8)
-    img[:, :, 2] = np.clip((b_base + noise) * fundus_mask, 0, 255).astype(np.uint8)
+    # Texture noise (smoothed spatial background variation without high-frequency pixel noise)
+    raw_noise = np.random.normal(0, 3, (h, w)).astype(np.float32)
+    smooth_noise = cv2.GaussianBlur(raw_noise, (15, 15), 0)
+    img[:, :, 0] = np.clip((r_base + smooth_noise) * fundus_mask, 0, 255).astype(np.uint8)
+    img[:, :, 1] = np.clip((g_base + smooth_noise) * fundus_mask, 0, 255).astype(np.uint8)
+    img[:, :, 2] = np.clip((b_base + smooth_noise) * fundus_mask, 0, 255).astype(np.uint8)
     
     # 2. Optic Disc (bright yellowish oval)
     disc_x = center[0] - int(radius * 0.45)
@@ -110,19 +111,27 @@ def generate_synthetic_fundus(
             cur_x, cur_y = next_x, next_y
             
     # 4. Inject DR Pathological Lesions according to ICDR Grade
-    if label >= 1:
-        # Grade 1 (Mild): Small red microaneurysms (dots)
-        num_ma = np.random.randint(5, 15) if label == 1 else np.random.randint(15, 40)
+    if label == 1:
+        # Grade 1 (Mild): Isolated microaneurysms ONLY (0 hemorrhages)
+        num_ma = np.random.randint(5, 12)
+        for _ in range(num_ma):
+            rand_r = np.random.uniform(radius * 0.25, radius * 0.75)
+            rand_theta = np.random.uniform(0, 2 * np.pi)
+            lx = int(center[0] + rand_r * np.cos(rand_theta))
+            ly = int(center[1] + rand_r * np.sin(rand_theta))
+            cv2.circle(img, (lx, ly), np.random.randint(2, 4), (15, 5, 5), -1)
+            
+    elif label == 2:
+        # Grade 2 (Moderate): Microaneurysms + small dot blot hemorrhages + Hard exudates
+        num_ma = np.random.randint(10, 20)
         for _ in range(num_ma):
             rand_r = np.random.uniform(radius * 0.2, radius * 0.8)
             rand_theta = np.random.uniform(0, 2 * np.pi)
             lx = int(center[0] + rand_r * np.cos(rand_theta))
             ly = int(center[1] + rand_r * np.sin(rand_theta))
-            cv2.circle(img, (lx, ly), np.random.randint(1, 3), (80, 10, 5), -1)
+            cv2.circle(img, (lx, ly), np.random.randint(2, 4), (15, 5, 5), -1)
             
-    if label >= 2:
-        # Grade 2 (Moderate): Dot-and-blot hemorrhages + Hard exudates (bright yellow wax)
-        num_hem = np.random.randint(8, 20)
+        num_hem = np.random.randint(3, 6)
         for _ in range(num_hem):
             rand_r = np.random.uniform(radius * 0.25, radius * 0.75)
             rand_theta = np.random.uniform(0, 2 * np.pi)
@@ -131,22 +140,30 @@ def generate_synthetic_fundus(
             cv2.ellipse(
                 img,
                 (lx, ly),
-                (np.random.randint(3, 8), np.random.randint(2, 6)),
+                (np.random.randint(5, 9), np.random.randint(4, 7)),
                 np.random.randint(0, 180), 0, 360,
-                (70, 8, 5), -1
+                (15, 5, 5), -1
             )
             
-        num_exudates = np.random.randint(5, 15)
+        num_exudates = np.random.randint(6, 12)
         for _ in range(num_exudates):
-            rand_r = np.random.uniform(radius * 0.2, radius * 0.7)
+            rand_r = np.random.uniform(radius * 0.2, radius * 0.65)
             rand_theta = np.random.uniform(0, 2 * np.pi)
             lx = int(center[0] + rand_r * np.cos(rand_theta))
             ly = int(center[1] + rand_r * np.sin(rand_theta))
-            cv2.circle(img, (lx, ly), np.random.randint(2, 6), (245, 235, 120), -1)
+            cv2.circle(img, (lx, ly), np.random.randint(3, 6), (255, 240, 130), -1)
             
-    if label >= 3:
-        # Grade 3 (Severe): Extensive flame hemorrhages, venous beading, cotton wool spots
-        num_large_hem = np.random.randint(15, 30)
+    elif label >= 3:
+        # Grade 3 & 4 (Severe/PDR): Extensive blot hemorrhages across all 4 quadrants
+        num_ma = np.random.randint(20, 35)
+        for _ in range(num_ma):
+            rand_r = np.random.uniform(radius * 0.15, radius * 0.85)
+            rand_theta = np.random.uniform(0, 2 * np.pi)
+            lx = int(center[0] + rand_r * np.cos(rand_theta))
+            ly = int(center[1] + rand_r * np.sin(rand_theta))
+            cv2.circle(img, (lx, ly), np.random.randint(2, 5), (15, 5, 5), -1)
+
+        num_large_hem = np.random.randint(25, 40)
         for _ in range(num_large_hem):
             rand_r = np.random.uniform(radius * 0.15, radius * 0.85)
             rand_theta = np.random.uniform(0, 2 * np.pi)
@@ -155,35 +172,35 @@ def generate_synthetic_fundus(
             cv2.ellipse(
                 img,
                 (lx, ly),
-                (np.random.randint(6, 16), np.random.randint(4, 10)),
+                (np.random.randint(7, 15), np.random.randint(5, 10)),
                 np.random.randint(0, 180), 0, 360,
-                (60, 5, 5), -1
+                (15, 5, 5), -1
             )
         # Cotton wool spots (soft white patches)
-        for _ in range(np.random.randint(3, 8)):
+        for _ in range(np.random.randint(4, 10)):
             rand_r = np.random.uniform(radius * 0.2, radius * 0.6)
             rand_theta = np.random.uniform(0, 2 * np.pi)
             lx = int(center[0] + rand_r * np.cos(rand_theta))
             ly = int(center[1] + rand_r * np.sin(rand_theta))
-            cv2.circle(img, (lx, ly), np.random.randint(5, 12), (230, 230, 210), -1)
+            cv2.circle(img, (lx, ly), np.random.randint(6, 14), (240, 240, 220), -1)
             
     if label == 4:
         # Grade 4 (Proliferative): Fronds of fragile neovascular vessels & preretinal hemorrhage
-        num_neo = np.random.randint(4, 8)
+        num_neo = np.random.randint(6, 12)
         for _ in range(num_neo):
-            nx, ny = center[0] + np.random.randint(-50, 50), center[1] + np.random.randint(-50, 50)
-            for _ in range(12):
-                end_x = nx + np.random.randint(-25, 25)
-                end_y = ny + np.random.randint(-25, 25)
-                cv2.line(img, (nx, ny), (end_x, end_y), (110, 15, 10), np.random.randint(1, 3))
+            nx, ny = center[0] + np.random.randint(-60, 60), center[1] + np.random.randint(-60, 60)
+            for _ in range(15):
+                end_x = nx + np.random.randint(-30, 30)
+                end_y = ny + np.random.randint(-30, 30)
+                cv2.line(img, (nx, ny), (end_x, end_y), (15, 5, 5), np.random.randint(2, 4))
                 
         # Large preretinal hemorrhage boat-shaped
         cv2.ellipse(
             img,
             (center[0] + int(radius * 0.3), center[1] - int(radius * 0.2)),
-            (int(radius * 0.2), int(radius * 0.08)),
+            (int(radius * 0.22), int(radius * 0.1)),
             -20, 0, 360,
-            (50, 2, 2), -1
+            (15, 5, 5), -1
         )
         
     # Re-apply mask to clean outer boundary

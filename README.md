@@ -125,6 +125,7 @@ VERA/
 │   ├── test_pipeline.py        # End-to-end integration tests (inference, Grad-CAM, pipeline)
 │   └── test_phase2.py          # Production components and checkpoint validation
 ├── requirements.txt            # Python dependencies
+├── EXPLAINABILITY.md           # Comprehensive Explainability & Interpretability Architecture Guide
 ├── LICENSE                     # MIT License
 └── README.md                   # Project documentation
 ```

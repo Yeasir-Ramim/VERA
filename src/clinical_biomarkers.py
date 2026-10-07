@@ -161,8 +161,9 @@ def detect_optic_disc_and_fovea(
     od_x, od_y = max_loc
     
     # Approximate OD radius (~1/12th of fundus diameter)
-    fundus_diameter = np.sqrt(np.sum(fundus_mask) / np.pi) * 2
-    od_radius = int(max(15, fundus_diameter * 0.08))
+    retinal_pixel_count = int(np.sum(fundus_mask > 0))
+    fundus_diameter = np.sqrt(retinal_pixel_count / np.pi) * 2
+    od_radius = int(np.clip(fundus_diameter * 0.08, 15, min(h, w) * 0.15))
     
     # Geometric estimation of Fovea:
     # In fundus photography, OD is on the nasal side, and Fovea is temporal.
@@ -187,6 +188,66 @@ def detect_optic_disc_and_fovea(
     return (od_x, od_y), od_radius, (fovea_x, fovea_y), fovea_radius
 
 
+def derive_etdrs_clinical_grade(
+    microaneurysm_count: int,
+    hemorrhage_count: int,
+    hard_exudate_count: int,
+    cotton_wool_spot_count: int,
+    severe_quadrant_count: int
+) -> Tuple[int, str]:
+    """
+    Derives the objective ICDR stage according to international ETDRS clinical guidelines:
+    - Grade 3 (Severe NPDR): ETDRS 4-2-1 rule satisfied (severe hemorrhages in >=3 quadrants or >=20 total hemorrhages).
+    - Grade 2 (Moderate NPDR): Intraretinal blot hemorrhages (>=3), hard exudates (>=3), or cotton wool spots (>=2).
+    - Grade 1 (Mild NPDR): Microaneurysms present.
+    - Grade 0 (No DR): 0 lesions.
+    """
+    if severe_quadrant_count >= 3 or hemorrhage_count >= 20:
+        return 3, "ETDRS 4-2-1 Rule Criteria Satisfied (Severe Intraretinal Hemorrhages in ≥3 Quadrants)"
+    elif hemorrhage_count >= 3 or hard_exudate_count >= 3 or cotton_wool_spot_count >= 2:
+        return 2, "Intraretinal Hemorrhages / Exudative Pathology Detected"
+    elif microaneurysm_count > 0 or hemorrhage_count > 0:
+        return 1, "Microaneurysms Detected"
+    else:
+        return 0, "No Apparent Microvascular Lesions"
+
+
+def reconcile_icdr_grade(
+    model_pred_class: int,
+    model_probs: np.ndarray,
+    biomarker_report: ClinicalBiomarkerReport
+) -> Tuple[int, float, np.ndarray, bool, str]:
+    """
+    Reconciles raw neural network prediction with objective ETDRS clinical rule engine.
+    Acts as a clinical safety net preventing false negatives (e.g. model predicting Grade 0
+    when objective lesion quantitation detects microaneurysms, hemorrhages, or 4-2-1 criteria).
+    """
+    etdrs_grade, rule_reason = derive_etdrs_clinical_grade(
+        microaneurysm_count=biomarker_report.microaneurysm_count,
+        hemorrhage_count=biomarker_report.hemorrhage_count,
+        hard_exudate_count=biomarker_report.hard_exudate_count,
+        cotton_wool_spot_count=biomarker_report.cotton_wool_spot_count,
+        severe_quadrant_count=biomarker_report.quadrants_with_severe_hemorrhages
+    )
+
+    reconciled_grade = max(model_pred_class, etdrs_grade)
+    override_triggered = (reconciled_grade > model_pred_class)
+
+    if override_triggered:
+        probs = np.array(model_probs, dtype=float, copy=True)
+        orig_max = probs[model_pred_class] if model_pred_class < len(probs) else 0.80
+        for k in range(len(probs)):
+            probs[k] = 0.01
+        probs[reconciled_grade] = max(orig_max, 0.95)
+        probs = probs / np.sum(probs)
+        confidence = float(probs[reconciled_grade])
+        return reconciled_grade, confidence, probs, True, rule_reason
+    else:
+        probs = np.array(model_probs, dtype=float, copy=True)
+        confidence = float(probs[model_pred_class]) if model_pred_class < len(probs) else 1.0
+        return model_pred_class, confidence, probs, False, ""
+
+
 def analyze_clinical_biomarkers(
     img_rgb: np.ndarray,
     vessel_prob_map: np.ndarray,
@@ -198,20 +259,34 @@ def analyze_clinical_biomarkers(
     CSME/DME risk triage, and quadrant distribution profiling.
     """
     h, w = img_rgb.shape[:2]
+    if vessel_prob_map.shape[:2] != (h, w):
+        vessel_prob_map = cv2.resize(vessel_prob_map, (w, h), interpolation=cv2.INTER_LINEAR)
+        
+    # Ben Graham illumination filtering shifts mean RGB channels near 128 and removes global color balance,
+    # causing classical morphological bottom-hat to mistake high-pass contrast edges for false-positive lesions.
+    # If a Ben Graham image is detected, sanitize it with CLAHE contrast enhancement for morphology.
+    r_m, g_m, b_m = float(np.mean(img_rgb[:, :, 0])), float(np.mean(img_rgb[:, :, 1])), float(np.mean(img_rgb[:, :, 2]))
+    if abs(r_m - 128.0) < 20.0 and abs(g_m - 128.0) < 20.0 and abs(r_m - g_m) < 12.0 and abs(g_m - b_m) < 12.0:
+        from .preprocessing import apply_clahe
+        img_rgb = apply_clahe(img_rgb)
     
-    # 1. Fundus Mask
+    # 1. Fundus Mask & Inner Border Perimeter Validity Mask
     gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
     fundus_mask = (gray > 15).astype(np.uint8) * 255
     retinal_area_px = int(np.sum(fundus_mask > 0))
     if retinal_area_px == 0:
         retinal_area_px = h * w
         
+    # Erode fundus mask by ~15-20 pixels to exclude circular crop boundary reflections & vignetting artifacts
+    kernel_border = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (35, 35))
+    inner_fundus_mask = cv2.erode(fundus_mask, kernel_border)
+        
     # 2. Localize Optic Disc & Fovea
     od_center, od_radius, fovea_center, fovea_radius = detect_optic_disc_and_fovea(img_rgb, fundus_mask)
     
-    # Optic disc mask to exclude disc physiologic pallor from exudate count
+    # Optic disc mask to exclude disc physiologic pallor and margins from lesion counts
     od_mask = np.zeros((h, w), dtype=np.uint8)
-    cv2.circle(od_mask, od_center, int(od_radius * 1.3), 255, -1)
+    cv2.circle(od_mask, od_center, int(od_radius * 1.4), 255, -1)
     
     # 3. Vascular Mask
     vessel_binary = (vessel_prob_map > 0.25).astype(np.uint8) * 255
@@ -230,13 +305,14 @@ def analyze_clinical_biomarkers(
     bhat_small = cv2.morphologyEx(green, cv2.MORPH_BLACKHAT, kernel_small)
     bhat_med = cv2.morphologyEx(green, cv2.MORPH_BLACKHAT, kernel_med)
     
-    # Mask out main vessel tree to isolate isolated red lesions (MAs and hemorrhages)
-    dilated_vessels = cv2.dilate(vessel_binary, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    # Mask out vessel tree (dilated to cover vessel walls) and optic disc to isolate genuine red lesions (MAs and hemorrhages)
+    dilated_vessels = cv2.dilate(vessel_binary, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
     red_lesions_raw = cv2.bitwise_and(bhat_med, bhat_med, mask=cv2.bitwise_not(dilated_vessels))
-    red_lesions_raw = cv2.bitwise_and(red_lesions_raw, red_lesions_raw, mask=fundus_mask)
+    red_lesions_raw = cv2.bitwise_and(red_lesions_raw, red_lesions_raw, mask=cv2.bitwise_not(od_mask))
+    red_lesions_raw = cv2.bitwise_and(red_lesions_raw, red_lesions_raw, mask=inner_fundus_mask)
     
-    # Threshold for candidate red lesions
-    _, red_thresh = cv2.threshold(red_lesions_raw, 18, 255, cv2.THRESH_BINARY)
+    # Threshold for candidate red lesions (suppresses background noise specks)
+    _, red_thresh = cv2.threshold(red_lesions_raw, 30, 255, cv2.THRESH_BINARY)
     
     # Connected component analysis for red lesions
     num_labels_red, labels_red, stats_red, centroids_red = cv2.connectedComponentsWithStats(red_thresh)
@@ -249,11 +325,11 @@ def analyze_clinical_biomarkers(
         cx = int(centroids_red[i][0])
         cy = int(centroids_red[i][1])
         
-        # Exclude border artifacts
-        if fundus_mask[cy, cx] == 0:
+        # Exclude border & boundary edge artifacts
+        if inner_fundus_mask[cy, cx] == 0:
             continue
             
-        if 2 <= area <= 20:  # Small focal punctate spot = Microaneurysm
+        if 3 <= area <= 20:  # Small focal punctate spot = Microaneurysm
             microaneurysms.append((cx, cy, max(2, int(np.sqrt(area)))))
         elif 21 < area <= 400:  # Larger blot/flame = Hemorrhage
             hemorrhages.append((cx, cy, max(3, int(np.sqrt(area)))))
@@ -266,11 +342,16 @@ def analyze_clinical_biomarkers(
     # Top-hat highlights bright local peaks
     kernel_exudate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     that_exudate = cv2.morphologyEx(L_channel, cv2.MORPH_TOPHAT, kernel_exudate)
-    # Mask out optic disc
+    # Mask out optic disc and outer border perimeter
     that_exudate = cv2.bitwise_and(that_exudate, that_exudate, mask=cv2.bitwise_not(od_mask))
-    that_exudate = cv2.bitwise_and(that_exudate, that_exudate, mask=fundus_mask)
+    that_exudate = cv2.bitwise_and(that_exudate, that_exudate, mask=inner_fundus_mask)
     
-    _, bright_thresh = cv2.threshold(that_exudate, 22, 255, cv2.THRESH_BINARY)
+    _, bright_thresh = cv2.threshold(that_exudate, 35, 255, cv2.THRESH_BINARY)
+    
+    # Yellow-White Lipid Spectral Verification: Hard exudates are bright yellow/white waxy deposits (high G, low R-G offset)
+    R_chan, G_chan = img_rgb[:, :, 0], img_rgb[:, :, 1]
+    yellow_white_mask = (G_chan > 125) & ((R_chan.astype(int) - G_chan.astype(int)) < 65)
+    bright_thresh = cv2.bitwise_and(bright_thresh, bright_thresh, mask=yellow_white_mask.astype(np.uint8) * 255)
     
     num_labels_bright, labels_bright, stats_bright, centroids_bright = cv2.connectedComponentsWithStats(bright_thresh)
     
@@ -283,7 +364,7 @@ def analyze_clinical_biomarkers(
         cx = int(centroids_bright[i][0])
         cy = int(centroids_bright[i][1])
         
-        if fundus_mask[cy, cx] == 0:
+        if inner_fundus_mask[cy, cx] == 0:
             continue
             
         if 3 <= area <= 60:
@@ -367,10 +448,19 @@ def analyze_clinical_biomarkers(
             meets_severe_threshold=meets_severe
         )
         
-    meets_4_quad_rule = severe_quadrant_count >= 4 or (pred_grade >= 3)
+    # ETDRS Rule-Based Grade Derivation
+    etdrs_rule_grade, _ = derive_etdrs_clinical_grade(
+        microaneurysm_count=len(microaneurysms),
+        hemorrhage_count=len(hemorrhages),
+        hard_exudate_count=len(hard_exudates),
+        cotton_wool_spot_count=len(cotton_wool_spots),
+        severe_quadrant_count=severe_quadrant_count
+    )
+    effective_grade = max(pred_grade, etdrs_rule_grade)
+    meets_4_quad_rule = severe_quadrant_count >= 3 or (effective_grade >= 3)
     
     # 8. Clinical Interpretation & Decision Advice
-    if pred_grade == 0:
+    if effective_grade == 0:
         stage_desc = "Normal Retinal Examination (No signs of Diabetic Retinopathy)"
         primary_threat = "None detected. Microvascular structure is intact."
         actions = [
@@ -378,7 +468,7 @@ def analyze_clinical_biomarkers(
             "Routine annual or biennial dilated retinal screening advised.",
             "Continue optimal blood pressure and lipid monitoring."
         ]
-    elif pred_grade == 1:
+    elif effective_grade == 1:
         stage_desc = "Mild Non-Proliferative Diabetic Retinopathy (NPDR)"
         primary_threat = "Isolated microaneurysms indicating early capillary wall breakdown."
         actions = [
@@ -386,7 +476,7 @@ def analyze_clinical_biomarkers(
             "Intensify diabetic medical management to stall microvascular progression.",
             "Counsel patient on glycemic variability and early visual symptoms."
         ]
-    elif pred_grade == 2:
+    elif effective_grade == 2:
         stage_desc = "Moderate Non-Proliferative Diabetic Retinopathy (NPDR)"
         primary_threat = "Microvascular leakage with intraretinal hemorrhages and lipid exudation."
         actions = [
@@ -394,7 +484,7 @@ def analyze_clinical_biomarkers(
             "Perform Macular Optical Coherence Tomography (OCT) to rule out subclinical macular edema.",
             "Strict blood pressure (< 130/80 mmHg) and lipid control to prevent exudate accumulation."
         ]
-    elif pred_grade == 3:
+    elif effective_grade == 3:
         stage_desc = "Severe Non-Proliferative Diabetic Retinopathy (Severe NPDR - High Risk of PDR)"
         primary_threat = "Widespread retinal ischemia (4-2-1 criteria met), high risk of rapid progression to proliferative neovascularization."
         actions = [
@@ -447,13 +537,22 @@ def analyze_clinical_biomarkers(
     for (cx, cy, cr) in cotton_wool_spots:
         cv2.rectangle(annotated, (cx - cr, cy - cr), (cx + cr, cy + cr), (0, 255, 255), 2, cv2.LINE_AA)
         
-    # Quadrant Labels (ST, IT, SN, IN)
+    # Quadrant Labels (ST, IT, SN, IN) dynamically aligned with Nasal (OD side) and Temporal orientation
     offset_x = 20
     offset_y = 25
-    cv2.putText(annotated, "ST", (w - 40, offset_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
-    cv2.putText(annotated, "IT", (w - 40, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
-    cv2.putText(annotated, "SN", (offset_x, offset_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
-    cv2.putText(annotated, "IN", (offset_x, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+    if od_center[0] >= fx:
+        # Optic Disc is on the Right side -> Right side is NASAL (SN, IN), Left side is TEMPORAL (ST, IT)
+        top_left_label, top_right_label = "ST", "SN"
+        bot_left_label, bot_right_label = "IT", "IN"
+    else:
+        # Optic Disc is on the Left side -> Left side is NASAL (SN, IN), Right side is TEMPORAL (ST, IT)
+        top_left_label, top_right_label = "SN", "ST"
+        bot_left_label, bot_right_label = "IN", "IT"
+        
+    cv2.putText(annotated, top_left_label, (offset_x, offset_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+    cv2.putText(annotated, top_right_label, (w - 40, offset_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+    cv2.putText(annotated, bot_left_label, (offset_x, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+    cv2.putText(annotated, bot_right_label, (w - 40, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
     return ClinicalBiomarkerReport(
         microaneurysm_count=len(microaneurysms),

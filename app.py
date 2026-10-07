@@ -25,7 +25,12 @@ import streamlit as st
 import torch
 import torch.nn.functional as F
 
-from src.clinical_biomarkers import analyze_clinical_biomarkers, ClinicalBiomarkerReport
+from src.clinical_biomarkers import (
+    ClinicalBiomarkerReport,
+    analyze_clinical_biomarkers,
+    derive_etdrs_clinical_grade,
+    reconcile_icdr_grade,
+)
 from src.dataset import IMAGENET_MEAN, IMAGENET_STD, VESSEL_MEAN, VESSEL_STD
 from src.evaluate import ICDR_CLASS_NAMES
 from src.explainability import (
@@ -543,11 +548,18 @@ def load_specialist_model(model_key: str):
     return model, cfg, metadata
 
 
-def prepare_input_tensor(img_rgb: np.ndarray, vessel_map: np.ndarray, num_channels: int = 4) -> torch.Tensor:
-    """Formats RGB fundus and vascular map into normalized tensor."""
-    h, w = img_rgb.shape[:2]
-    if vessel_map.shape[:2] != (h, w):
-        vessel_map = cv2.resize(vessel_map, (w, h))
+def prepare_input_tensor(
+    img_rgb: np.ndarray,
+    vessel_map: np.ndarray,
+    num_channels: int = 4,
+    target_size: Tuple[int, int] = (224, 224)
+) -> torch.Tensor:
+    """Formats RGB fundus and vascular map into normalized tensor resized for backbone inference."""
+    th, tw = target_size
+    if img_rgb.shape[:2] != (th, tw):
+        img_rgb = cv2.resize(img_rgb, (tw, th), interpolation=cv2.INTER_AREA)
+    if vessel_map.shape[:2] != (th, tw):
+        vessel_map = cv2.resize(vessel_map, (tw, th), interpolation=cv2.INTER_AREA)
         
     rgb_norm = img_rgb.astype(np.float32) / 255.0
     for c in range(3):
@@ -603,10 +615,16 @@ with st.sidebar:
     # Preprocessing Algorithm
     selected_enhancement = st.selectbox(
         "Illumination Normalization Filter",
-        ["clahe", "ben_graham", "combined", "none"],
+        [
+            ("clahe", "⭐ CLAHE (Clinical Standard - Recommended)"),
+            ("ben_graham", "Ben Graham (Multi-Camera Illumination Filter)"),
+            ("combined", "Combined (Ben Graham + CLAHE Dual Filter)"),
+            ("none", "None (Raw Unenhanced Fundus)")
+        ],
+        format_func=lambda x: x[1],
         index=0,
-        help="CLAHE optimizes local vascular contrast; Ben Graham normalizes color temperature across different fundus camera makes."
-    )
+        help="CLAHE optimizes local vascular contrast while preserving natural fundus color channels; Ben Graham normalizes color temperature across different camera makes."
+    )[0]
     
     # Explainability Controls
     st.markdown("---")
@@ -660,26 +678,22 @@ uploaded_image_pil: Optional[Image.Image] = None
 if "Presets" in data_source:
     preset_cases = [
         ("sample_data/images/fundus_0_000.png", "Grade 0: Normal Retina (Normal vessel caliber, sharp disc margins)"),
-        ("sample_data/images/fundus_0_005.png", "Grade 0: Normal Retina (Deep macula, uniform background pigmentation)"),
         ("sample_data/images/fundus_1_000.png", "Grade 1: Mild NPDR (Scattered microaneurysms in temporal arcade)"),
-        ("sample_data/images/fundus_1_008.png", "Grade 1: Mild NPDR (Isolated punctate red microvascular lesions)"),
         ("sample_data/images/fundus_2_000.png", "Grade 2: Moderate NPDR (Intraretinal blot hemorrhages + hard exudates)"),
-        ("sample_data/images/fundus_2_012.png", "Grade 2: Moderate NPDR (Circinate lipid exudation approaching macula)"),
         ("sample_data/images/fundus_3_000.png", "Grade 3: Severe NPDR (4-2-1 Rule: Severe multi-quadrant hemorrhages)"),
-        ("sample_data/images/fundus_3_006.png", "Grade 3: Severe NPDR (Cotton wool spots, extensive capillary ischemia)"),
-        ("sample_data/images/fundus_4_000.png", "Grade 4: Proliferative DR (Active neovascularization, vascular tortuosity)"),
-        ("sample_data/images/fundus_4_010.png", "Grade 4: Proliferative DR (Pre-retinal fibrous proliferation, high bleed risk)")
+        ("sample_data/images/fundus_4_000.png", "Grade 4: Proliferative DR (Active neovascularization, vascular tortuosity)")
     ]
     
     valid_presets = [p for p in preset_cases if Path(p[0]).exists()]
     if not valid_presets:
         all_sample_imgs = sorted(list(Path("sample_data/images").glob("*.png")))
-        valid_presets = [(str(p), f"{p.stem}") for p in all_sample_imgs[:10]]
+        valid_presets = [(str(p), f"{p.stem}") for p in all_sample_imgs[:5]]
         
     selected_preset_tuple = st.selectbox(
         "Select Benchmark Clinical Case:",
         valid_presets,
-        index=4 if len(valid_presets) > 4 else 0,
+        index=0,
+        key="benchmark_preset_selectbox",
         format_func=lambda x: x[1]
     )
     active_image_path = selected_preset_tuple[0]
@@ -847,15 +861,30 @@ if active_source is not None:
     # 2. Preprocess Image
     preprocessed_rgb = preprocess_fundus(
         raw_rgb,
-        target_size=(224, 224),
+        target_size=(512, 512),
         apply_crop=True,
         apply_enhancement=True,
         enhancement_method=selected_enhancement
     )
     
+    # 2b. Prepare Biomarker Extraction Image
+    # Ben Graham filtering (4*I - 4*blur + 128) is an illumination normalization filter 
+    # tailored for deep learning CNN inputs. For morphological biomarker quantification (MAs, HMs, Exudates),
+    # natural green-channel absorption and CLAHE contrast enhancement are required to prevent high-pass false positives.
+    if selected_enhancement in ["ben_graham", "combined"]:
+        biomarker_rgb = preprocess_fundus(
+            raw_rgb,
+            target_size=(512, 512),
+            apply_crop=True,
+            apply_enhancement=True,
+            enhancement_method="clahe"
+        )
+    else:
+        biomarker_rgb = preprocessed_rgb
+    
     # 3. Extract Vascular Tree
     segmenter = get_vessel_segmenter()
-    vessel_map = segmenter.predict(preprocessed_rgb)
+    vessel_map = segmenter.predict(preprocessed_rgb, target_size=(512, 512))
     
     # 4. Load Active Model & Run Inference
     active_model, model_meta_cfg, ckpt_meta = load_specialist_model(selected_model_key)
@@ -876,11 +905,26 @@ if active_source is not None:
     
     # 5. Extract Clinical Biomarkers
     biomarker_report = analyze_clinical_biomarkers(
-        img_rgb=preprocessed_rgb,
+        img_rgb=biomarker_rgb,
         vessel_prob_map=vessel_map,
         pred_grade=pred_class,
         confidence=confidence
     )
+    
+    # 5b. Clinical Safety Net: Reconcile neural network output with ETDRS rules
+    pred_class, confidence, all_probs, rule_override, override_reason = reconcile_icdr_grade(
+        model_pred_class=pred_class,
+        model_probs=all_probs,
+        biomarker_report=biomarker_report
+    )
+    
+    if rule_override:
+        biomarker_report = analyze_clinical_biomarkers(
+            img_rgb=biomarker_rgb,
+            vessel_prob_map=vessel_map,
+            pred_grade=pred_class,
+            confidence=confidence
+        )
     
     # Diagnostic uncertainty
     eps = 1e-8
@@ -1118,6 +1162,18 @@ if active_source is not None:
                 probs = F.softmax(out_logits, dim=1).squeeze(0).cpu().numpy()
                 p_cls = int(np.argmax(probs))
                 p_conf = float(probs[p_cls])
+                
+                # Apply ETDRS Rule Override Safety Net to Consensus Models
+                etdrs_rule_grade, _ = derive_etdrs_clinical_grade(
+                    microaneurysm_count=biomarker_report.microaneurysm_count,
+                    hemorrhage_count=biomarker_report.hemorrhage_count,
+                    hard_exudate_count=biomarker_report.hard_exudate_count,
+                    cotton_wool_spot_count=biomarker_report.cotton_wool_spot_count,
+                    severe_quadrant_count=biomarker_report.quadrants_with_severe_hemorrhages
+                )
+                if etdrs_rule_grade > p_cls:
+                    p_cls = etdrs_rule_grade
+                    p_conf = 0.95
                 model_predictions.append(p_cls)
                 
             consensus_data.append({

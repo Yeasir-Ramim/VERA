@@ -119,6 +119,39 @@ class TestDRPipeline(unittest.TestCase):
         self.assertEqual(overlay.shape, (224, 224, 3))
         self.assertEqual(overlay.dtype, np.uint8)
 
+    def test_6_etdrs_reconciliation(self):
+        """Verify ETDRS clinical rule safety net overrides false-negative Grade 0 predictions."""
+        from src.clinical_biomarkers import analyze_clinical_biomarkers, derive_etdrs_clinical_grade, reconcile_icdr_grade
+        
+        # Test derive_etdrs_clinical_grade
+        grade_3, _ = derive_etdrs_clinical_grade(
+            microaneurysm_count=335,
+            hemorrhage_count=45,
+            hard_exudate_count=0,
+            cotton_wool_spot_count=0,
+            severe_quadrant_count=3
+        )
+        self.assertEqual(grade_3, 3)
+        
+        # Test reconcile_icdr_grade when model predicts 0 but 3 severe quadrants exist
+        prep = preprocess_fundus(self.test_img, target_size=(224, 224))
+        vessel_map = extract_vessel_map_multiscale(prep, target_size=(224, 224))
+        
+        # Generate initial report with pred_grade=0
+        report = analyze_clinical_biomarkers(prep, vessel_map, pred_grade=0, confidence=1.0)
+        # Mock 3 severe quadrants to mirror user's clinical scan
+        report.quadrants_with_severe_hemorrhages = 3
+        report.hemorrhage_count = 45
+        report.microaneurysm_count = 335
+        
+        model_probs = np.array([1.0, 0.0, 0.0, 0.0, 0.0])
+        final_grade, conf, new_probs, override, reason = reconcile_icdr_grade(0, model_probs, report)
+        
+        self.assertTrue(override)
+        self.assertEqual(final_grade, 3)
+        self.assertGreater(conf, 0.90)
+        self.assertEqual(int(np.argmax(new_probs)), 3)
+
 
 if __name__ == "__main__":
     unittest.main()
